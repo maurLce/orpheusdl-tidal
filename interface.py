@@ -28,7 +28,9 @@ module_information = ModuleInformation(
         'enable_mobile': True,
         'force_non_spatial': False,
         'prefer_ac4': False,
-        'fix_mqa': True
+        'fix_mqa': True,
+        'atmos_only': False,
+        'batch_processing': { 'earliest_date': None }
     },
     flags=ModuleFlags.needs_cover_resize,
     session_storage_variables=['sessions'],
@@ -270,11 +272,31 @@ class ModuleInterface:
             }
         )
 
+    def get_filtered_projects(self, items, filter_list, earliest_date):
+        filtered_items = []
+        for item in items:
+            if earliest_date is None or item["streamStartDate"] >= earliest_date:
+                if not filter_list or not set(filter_list).isdisjoint(item["audioModes"]):
+                    filtered_items.append(item)
+        return filtered_items
+
     def get_artist_info(self, artist_id: str, get_credited_albums: bool) -> ArtistInfo:
         artist_data = self.session.get_artist(artist_id)
 
-        artist_albums = self.session.get_artist_albums(artist_id).get('items')
-        artist_singles = self.session.get_artist_albums_ep_singles(artist_id).get('items')
+        try:
+            earliest_date = self.settings["batch_processing"]["earliest_date"]
+            earliest_date = earliest_date[:-2] + ":" + earliest_date[-2:]
+            datetime.fromisoformat(earliest_date)
+        except:
+            earliest_date = None
+
+        audio_modes_filter = ["DOLBY_ATMOS"] if self.settings["atmos_only"] else []
+
+        all_artist_albums = self.session.get_artist_albums(artist_id).get('items')
+        artist_albums = self.get_filtered_projects(all_artist_albums, audio_modes_filter, earliest_date)
+
+        all_artist_singles = self.session.get_artist_albums_ep_singles(artist_id).get('items')
+        artist_singles = self.get_filtered_projects(all_artist_singles, audio_modes_filter, earliest_date)
 
         # Only works with a mobile session, annoying, never do this again
         credit_albums = []
