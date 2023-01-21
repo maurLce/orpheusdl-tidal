@@ -32,7 +32,8 @@ module_information = ModuleInformation(
         'atmos_only': False,
         'batch_processing': { 'earliest_date': None }
     },
-    flags=ModuleFlags.needs_cover_resize,
+    # currently too broken to keep it, cover needs to be jpg else crash, problems on termux due to pillow
+    # flags=ModuleFlags.needs_cover_resize,
     session_storage_variables=['sessions'],
     netlocation_constant='tidal',
     test_url='https://tidal.com/browse/track/92265335'
@@ -108,7 +109,8 @@ class ModuleInterface:
                 else:
                     if not username or not password:
                         self.print(f'{module_information.service_name}: Creating a Mobile session')
-                        self.print(f'{module_information.service_name}: Enter your Tidal username and password:')
+                        self.print(f'{module_information.service_name}: Enter your TIDAL username and password:')
+                        self.print(f'{module_information.service_name}: (password will not be echoed)')
                         username = input(' Username: ')
                         password = getpass(' Password: ')
                     sessions[session_type].auth(username, password)
@@ -143,7 +145,8 @@ class ModuleInterface:
                     sessions[session_type].auth()
                 else:
                     self.print(f'{module_information.service_name}: Recreating a Mobile session')
-                    self.print(f'{module_information.service_name}: Enter your Tidal username and password:')
+                    self.print(f'{module_information.service_name}: Enter your TIDAL username and password:')
+                    self.print(f'{module_information.service_name}: (password will not be echoed)')
                     username = input('Username: ')
                     password = getpass('Password: ')
                     sessions[session_type].auth(username, password)
@@ -163,7 +166,7 @@ class ModuleInterface:
     def check_subscription(self, subscription: str) -> bool:
         # returns true if "disable_subscription_checks" is enabled or subscription is HIFI Plus
         if not self.disable_subscription_check and subscription not in {'HIFI', 'PREMIUM_PLUS'}:
-            self.print(f'{module_information.service_name}: Account is not a HiFi Plus account, '
+            self.print(f'{module_information.service_name}: Account does not have a HiFi (Plus) subscription, '
                        f'detected subscription: {subscription}')
             return False
         return True
@@ -188,7 +191,7 @@ class ModuleInterface:
 
         items = []
         for i in results[query_type.name + 's'].get('items'):
-            duration = None
+            duration, name = None, None
             if query_type is DownloadTypeEnum.artist:
                 name = i.get('name')
                 artists = None
@@ -258,6 +261,14 @@ class ModuleInterface:
         else:
             creator_name = 'Unknown'
 
+        if playlist_data.get('squareImage'):
+            cover_url = self._generate_artwork_url(playlist_data['squareImage'], size=self.cover_size, max_size=1080)
+            cover_type = ImageFileTypeEnum.jpg
+        else:
+            # fallback to defaultPlaylistImage
+            cover_url = 'https://tidal.com/browse/assets/images/defaultImages/defaultPlaylistImage.png'
+            cover_type = ImageFileTypeEnum.png
+
         return PlaylistInfo(
             name=playlist_data.get('title'),
             creator=creator_name,
@@ -265,8 +276,8 @@ class ModuleInterface:
             release_year=playlist_data.get('created')[:4],
             duration=playlist_data.get('duration'),
             creator_id=playlist_data['creator'].get('id'),
-            cover_url=self._generate_artwork_url(playlist_data['squareImage'], size=self.cover_size,
-                                                 max_size=1080) if playlist_data['squareImage'] else None,
+            cover_url=cover_url,
+            cover_type=cover_type,
             track_extra_kwargs={
                 'data': {track.get('item').get('id'): track.get('item') for track in playlist_tracks.get('items')}
             }
@@ -385,6 +396,14 @@ class ModuleInterface:
             if len(release_year) > 0:
                 release_year = release_year[0]
 
+        if album_data.get('cover'):
+            cover_url = self._generate_artwork_url(album_data.get('cover'), size=self.cover_size)
+            cover_type = ImageFileTypeEnum.jpg
+        else:
+            # fallback to defaultAlbumImage
+            cover_url = 'https://tidal.com/browse/assets/images/defaultImages/defaultAlbumImage.png'
+            cover_type = ImageFileTypeEnum.png
+
         return AlbumInfo(
             name=album_data.get('title'),
             release_year=release_year,
@@ -392,8 +411,8 @@ class ModuleInterface:
             quality=quality,
             upc=album_data.get('upc'),
             duration=album_data.get('duration'),
-            cover_url=self._generate_artwork_url(album_data.get('cover'),
-                                                 size=self.cover_size) if album_data.get('cover') else None,
+            cover_url=cover_url,
+            cover_type=cover_type,
             animated_cover_url=self._generate_animated_artwork_url(album_data.get('videoCover')) if album_data.get(
                 'videoCover') else None,
             artist=album_data.get('artist').get('name'),
@@ -429,10 +448,11 @@ class ModuleInterface:
 
         # check if album is only available in LOSSLESS and STEREO, so it switches to the MOBILE_DEFAULT which will
         # get FLACs faster, instead of using MPEG-DASH
-        # TODO: Can the MOBILE_DEFAULT" be deleted?
+        # lmao what did I smoke when I wrote this, track_data and not album_data!
         if (self.settings['force_non_spatial'] or (
-                (quality_tier is QualityEnum.LOSSLESS or album_data.get('audioQuality') == 'LOSSLESS')
-                and album_data.get('audioModes') == ['STEREO'])) and SessionType.MOBILE_DEFAULT.name in self.available_sessions:
+                (quality_tier is QualityEnum.LOSSLESS or track_data.get('audioQuality') == 'LOSSLESS')
+                and track_data.get('audioModes') == ['STEREO'])) and (
+                SessionType.MOBILE_DEFAULT.name in self.available_sessions):
             self.session.default = SessionType.MOBILE_DEFAULT
         elif (track_data.get('audioModes') == ['SONY_360RA']
               or ('DOLBY_ATMOS' in track_data.get('audioModes') and self.settings['prefer_ac4'])) \
@@ -525,6 +545,12 @@ class ModuleInterface:
         track_name = track_data.get('title')
         track_name += f' ({track_data.get("version")})' if track_data.get("version") else ''
 
+        if track_data['album'].get('cover'):
+            cover_url = self._generate_artwork_url(track_data['album'].get('cover'), size=self.cover_size)
+        else:
+            # fallback to defaultTrackImage, no cover_type flag? Might crash in the future
+            cover_url = 'https://tidal.com/browse/assets/images/defaultImages/defaultTrackImage.png'
+
         track_info = TrackInfo(
             name=track_name,
             album=album_data.get('title'),
@@ -537,8 +563,7 @@ class ModuleInterface:
             sample_rate=sample_rate,
             bitrate=bitrate,
             duration=track_data.get('duration'),
-            cover_url=self._generate_artwork_url(track_data['album'].get('cover'),
-                                                 size=self.cover_size) if track_data['album'].get('cover') else None,
+            cover_url=cover_url,
             explicit=track_data.get('explicit'),
             tags=self.convert_tags(track_data, album_data, mqa_file),
             codec=track_codec,
@@ -683,7 +708,7 @@ class ModuleInterface:
             silentremove(merged_temp_location)
             for temp_location in temp_locations:
                 silentremove(temp_location)
-        except Exception:
+        except:
             self.print('FFmpeg is not installed or working! Using fallback, may have errors')
 
             # return the MP4 temp file, but tell orpheus to change the container to .m4a (AAC)
@@ -706,9 +731,12 @@ class ModuleInterface:
         track_data = data[track_id] if track_id in data else self.session.get_track(track_id)
         cover_id = track_data['album'].get('cover')
 
-        # Tidal don't support PNG, so it will always get JPG
-        cover_url = self._generate_artwork_url(cover_id, size=cover_options.resolution)
-        return CoverInfo(url=cover_url, file_type=ImageFileTypeEnum.jpg)
+        if cover_id:
+            return CoverInfo(url=self._generate_artwork_url(cover_id, size=cover_options.resolution),
+                             file_type=ImageFileTypeEnum.jpg)
+
+        return CoverInfo(url='https://tidal.com/browse/assets/images/defaultImages/defaultTrackImage.png',
+                         file_type=ImageFileTypeEnum.png)
 
     def get_track_lyrics(self, track_id: str, track_data: dict = None) -> LyricsInfo:
         if not track_data:
@@ -738,7 +766,8 @@ class ModuleInterface:
 
         return LyricsInfo(
             embedded=embedded,
-            synced=synced
+            # regex to remove the space after the timestamp "[mm:ss.xx] " to "[mm:ss.xx]"
+            synced=re.sub(r'(\[\d{2}:\d{2}.\d{2,3}])(?: )', r'\1', synced) if synced else None
         )
 
     def get_track_credits(self, track_id: str, data=None) -> Optional[list]:
