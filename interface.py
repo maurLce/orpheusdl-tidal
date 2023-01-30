@@ -30,6 +30,7 @@ module_information = ModuleInformation(
         'prefer_ac4': False,
         'fix_mqa': True,
         'atmos_only': False,
+        '360_only': False,
         'batch_processing': { 'earliest_date': None }
     },
     # currently too broken to keep it, cover needs to be jpg else crash, problems on termux due to pillow
@@ -301,7 +302,11 @@ class ModuleInterface:
         except:
             earliest_date = None
 
-        audio_modes_filter = ["DOLBY_ATMOS"] if self.settings["atmos_only"] else []
+        audio_modes_filter = []
+        if self.settings["atmos_only"]:
+            audio_modes_filter.append("DOLBY_ATMOS")
+        if self.settings["360_only"]:
+            audio_modes_filter.append("SONY_360RA")
 
         all_artist_albums = self.session.get_artist_albums(artist_id).get('items')
         artist_albums = self.get_filtered_projects(all_artist_albums, audio_modes_filter, earliest_date)
